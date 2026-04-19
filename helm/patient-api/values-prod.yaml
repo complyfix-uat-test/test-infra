@@ -1,0 +1,187 @@
+# Production environment overrides for patient-api
+# HIPAA/SOC 2 hardening - but still has violations for testing ComplyFix
+
+replicaCount: 3
+
+image:
+  tag: "2.3.1"
+  pullPolicy: IfNotPresent
+
+# VIOLATION: podSecurityContext set but runAsNonRoot still missing (pattern 12)
+# This tests ComplyFix's ability to trace values across files and fix in the right place
+podSecurityContext:
+  fsGroup: 1000
+  # runAsNonRoot: true  <- ComplyFix should add this
+  # runAsUser: 1000     <- ComplyFix should add this
+
+# Container security context partially hardened
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  # VIOLATION: runAsNonRoot and runAsUser missing from container too
+  capabilities:
+    drop:
+      - ALL
+    add:
+      - NET_BIND_SERVICE
+
+# Resource limits defined for main container
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+service:
+  type: ClusterIP
+  port: 8080
+  annotations:
+    cloud.google.com/neg: '{"ingress": true}'
+
+# VIOLATION: Ingress TLS partially configured
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:123456789:certificate/prod"
+    alb.ingress.kubernetes.io/ssl-policy: "ELBSecurityPolicy-TLS-1-2-2017-01"
+  hosts:
+    - host: api.medvault.io
+      paths:
+        - path: /
+          pathType: Prefix
+  # VIOLATION: TLS block missing secretName field
+  tls:
+    - hosts:
+        - api.medvault.io
+      # secretName missing - ComplyFix should fix this
+
+config:
+  logLevel: warn
+  port: 8080
+  environment: production
+  auditLogging: "true"
+
+secrets:
+  enabled: true
+  databasePassword: "medvault-db-prod-2024-secure"
+  redisPassword: "medvault-redis-prod-2024-secure"
+  jwtSecret: "jwt-secret-key-prod-2024-long-secure-string"
+  apiKey: "api-key-prod-2024-secure"
+
+# VIOLATION: Redis subchart resources still empty (pattern 13)
+# Tests ComplyFix's ability to detect violations in subchart values
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "medvault-redis-prod-2024-secure"
+  master:
+    persistence:
+      enabled: true
+      size: 20Gi
+      storageClassName: gp3-encrypted
+    # VIOLATION: No resource limits on redis in prod
+    resources: {}
+      # ComplyFix should detect and add: limits and requests
+    podSecurityContext: {}
+      # ComplyFix should add runAsNonRoot, runAsUser, fsGroup
+    containerSecurityContext: {}
+      # ComplyFix should add allowPrivilegeEscalation, readOnlyRootFilesystem, etc.
+
+# VIOLATION: PostgreSQL subchart resources still empty (pattern 13)
+postgresql:
+  enabled: true
+  auth:
+    username: medvault
+    password: "pg-medvault-prod-2024-secure"
+    database: medvault_prod
+  primary:
+    persistence:
+      enabled: true
+      size: 100Gi
+      storageClassName: gp3-encrypted
+    # VIOLATION: No resource limits on postgresql in prod
+    resources: {}
+      # ComplyFix should detect and add limits and requests
+    podSecurityContext: {}
+      # ComplyFix should add security context
+    containerSecurityContext: {}
+      # ComplyFix should add security context
+
+# VIOLATION: Network policy still disabled in prod (pattern 14)
+networkPolicy:
+  enabled: false
+  # Even though disabled, having this commented-out template is good for compliance
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+      - podSelector:
+          matchLabels:
+            app: internal-tools
+  egress:
+    - to:
+      - namespaceSelector: {}
+      ports:
+      - protocol: TCP
+        port: 5432  # PostgreSQL
+      - protocol: TCP
+        port: 6379  # Redis
+
+# VIOLATION: Pod disruption budget disabled (pattern - no PDB)
+podDisruptionBudget:
+  enabled: false
+  # minAvailable: 2
+  # maxUnavailable: 1
+
+# Production monitoring
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    path: /metrics
+
+# Compliance tagging
+podAnnotations:
+  compliance.medvault.io/framework: "hipaa"
+  compliance.medvault.io/control-id: "AC-2,AC-3,AU-2,AU-12"
+  audit.medvault.io/pii-handling: "true"
+
+nodeSelector:
+  workload: production
+  compliance: required
+
+tolerations: []
+
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        podAffinityTerm:
+          labelSelector:
+            matchExpressions:
+              - key: app
+                operator: In
+                values:
+                  - patient-api
+          topologyKey: kubernetes.io/hostname
+
+# TODO: Enable network policy to restrict egress to PostgreSQL and Redis only
+# TODO: Set runAsNonRoot on all containers (main + subcharts) before HIPAA audit
+# TODO: Add resource limits to Redis and PostgreSQL subcharts
+# TODO: Enable pod disruption budget with minAvailable: 2
+# TODO: Configure secrets encryption at rest in EKS

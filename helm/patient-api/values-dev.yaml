@@ -1,0 +1,82 @@
+# Development environment overrides for patient-api
+# Relaxed security, minimal resources, local debugging enabled
+
+replicaCount: 1
+
+image:
+  tag: "latest"
+  pullPolicy: Always
+
+# VIOLATION: No pod security context in dev
+podSecurityContext: {}
+
+# VIOLATION: No container security context in dev
+securityContext: {}
+
+# VIOLATION: No resource limits in dev
+resources: {}
+
+autoscaling:
+  enabled: false
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# VIOLATION: HTTP-only ingress, no TLS in dev (pattern 17)
+ingress:
+  enabled: true
+  className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
+    cert-manager.io/cluster-issuer: "letsencrypt-staging"
+  hosts:
+    - host: api-dev.medvault.local
+      paths:
+        - path: /
+          pathType: Prefix
+  # VIOLATION: No TLS in dev environment
+  tls: []
+
+config:
+  logLevel: debug
+  port: 8080
+  environment: development
+  debugMode: "true"
+
+# VIOLATION: Secrets disabled in dev - using plain defaults
+secrets:
+  enabled: false
+
+# VIOLATION: Redis disabled - using in-memory cache
+redis:
+  enabled: false
+
+# VIOLATION: PostgreSQL persistence disabled - ephemeral database in dev
+postgresql:
+  enabled: true
+  primary:
+    persistence:
+      enabled: false
+    resources: {}
+    podSecurityContext: {}
+    containerSecurityContext: {}
+
+# VIOLATION: Network policy disabled in dev
+networkPolicy:
+  enabled: false
+
+# VIOLATION: No PDB in dev
+podDisruptionBudget:
+  enabled: false
+
+# VIOLATION: Pod security context relaxed for debugging
+podSecurityContext: {}
+  # runAsNonRoot: false
+
+# Development specific - faster image pulls
+imagePullSecrets: []
+
+# Allow SSH debugging into pods
+config:
+  allowDebugSsh: "true"

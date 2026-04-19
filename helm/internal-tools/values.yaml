@@ -1,0 +1,99 @@
+# Default values for internal-tools chart
+# Admin dashboard and operational tools for MedVault
+
+replicaCount: 1
+
+image:
+  repository: 123456789.dkr.ecr.us-east-1.amazonaws.com/medvault/internal-tools
+  tag: "1.1.0"
+  pullPolicy: Always
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# VIOLATION: Explicitly running as root (pattern 12)
+# ComplyFix should detect and fix by removing runAsUser: 0 and adding runAsNonRoot: true
+securityContext:
+  runAsUser: 0
+  # VIOLATION: Privileged container (pattern - privileged container)
+  privileged: true
+  allowPrivilegeEscalation: true
+
+# VIOLATION: No pod security context
+podSecurityContext: {}
+
+serviceAccount:
+  create: true
+  annotations: {}
+  name: "internal-tools"
+
+podAnnotations: {}
+
+# VIOLATION: No resource limits (pattern 13)
+resources: {}
+  # limits:
+  #   cpu: 100m
+  #   memory: 128Mi
+  # requests:
+  #   cpu: 50m
+  #   memory: 64Mi
+
+autoscaling:
+  enabled: false
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Service configuration
+# VIOLATION: NodePort service for internal tool (should be ClusterIP)
+service:
+  type: NodePort
+  port: 3000
+  targetPort: 3000
+  nodePort: 30080
+
+ingress:
+  enabled: false
+
+# VIOLATION: RBAC configuration - way too permissive (pattern 27)
+# ComplyFix should detect wildcard RBAC and suggest scoped permissions
+rbac:
+  create: true
+  clusterWide: true
+  rules:
+    # VIOLATION: Wildcard permissions - allows ANY action on ANY resource
+    - apiGroups: ["*"]
+      resources: ["*"]
+      verbs: ["*"]
+
+# VIOLATION: Network policy disabled (pattern 14)
+networkPolicy:
+  enabled: false
+  ingress: []
+  egress: []
+
+# Monitoring disabled for internal tool
+metrics:
+  enabled: false
+
+# Configuration
+config:
+  logLevel: debug
+  port: 3000
+  environment: production
+  debugMode: "false"
+
+# No secrets needed for internal tool
+secrets:
+  enabled: false
+
+# TODO: Restrict RBAC permissions to specific resources before HIPAA audit
+# TODO: Add pod security context with runAsNonRoot: true
+# TODO: Remove privileged mode and runAsUser: 0
+# TODO: Add resource limits
+# TODO: Change service type to ClusterIP for internal-only access
+# TODO: Enable network policy to restrict access to admin users only

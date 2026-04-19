@@ -1,0 +1,17 @@
+apiVersion: v2
+name: common
+description: Common library chart for MedVault Kubernetes deployments. Provides shared templates for security contexts, pod specs, and compliance labels.
+type: library
+version: 0.2.0
+appVersion: "1.0.0"
+keywords:
+  - common
+  - library
+  - templates
+  - helpers
+home: https://github.com/medvault/helm-common
+sources:
+  - https://github.com/medvault/helm-common
+maintainers:
+  - name: MedVault Platform Team
+    email: platform@medvault.io

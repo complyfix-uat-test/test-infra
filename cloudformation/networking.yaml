@@ -1,0 +1,611 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'MedVault VPC and Networking Infrastructure - CloudFormation Template'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+    ConstraintDescription: Must be dev, staging, or prod
+
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+    Description: CIDR block for VPC
+    AllowedPattern: '^(\d{1,3}\.){3}\d{1,3}/\d{1,2}$'
+    ConstraintDescription: Must be a valid CIDR notation
+
+  EnableFlowLogs:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable VPC Flow Logs for network traffic monitoring
+
+Conditions:
+  CreateFlowLogs: !Equals [!Ref EnableFlowLogs, 'true']
+
+Mappings:
+  SubnetConfig:
+    PublicSubnetAZ1:
+      CIDR: 10.0.1.0/24
+    PublicSubnetAZ2:
+      CIDR: 10.0.2.0/24
+    PublicSubnetAZ3:
+      CIDR: 10.0.3.0/24
+    PrivateSubnetAZ1:
+      CIDR: 10.0.11.0/24
+    PrivateSubnetAZ2:
+      CIDR: 10.0.12.0/24
+    PrivateSubnetAZ3:
+      CIDR: 10.0.13.0/24
+
+Resources:
+  # VPC
+  MedVaultVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-vpc-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-igw-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnets
+  PublicSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      CidrBlock: !FindInMap [SubnetConfig, PublicSubnetAZ1, CIDR]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-public-subnet-az1-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      CidrBlock: !FindInMap [SubnetConfig, PublicSubnetAZ2, CIDR]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-public-subnet-az2-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicSubnetAZ3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      CidrBlock: !FindInMap [SubnetConfig, PublicSubnetAZ3, CIDR]
+      AvailabilityZone: !Select [2, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-public-subnet-az3-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Public
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Private Subnets
+  PrivateSubnetAZ1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetAZ1, CIDR]
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-private-subnet-az1-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PrivateSubnetAZ2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetAZ2, CIDR]
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-private-subnet-az2-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PrivateSubnetAZ3:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      CidrBlock: !FindInMap [SubnetConfig, PrivateSubnetAZ3, CIDR]
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-private-subnet-az3-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Type
+          Value: Private
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Elastic IP for NAT Gateway
+  NATGatewayEIP:
+    Type: AWS::EC2::EIP
+    DependsOn: AttachGateway
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-nat-eip-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # NAT Gateway
+  NATGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt NATGatewayEIP.AllocationId
+      SubnetId: !Ref PublicSubnetAZ1
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-nat-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-public-rt-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetAZ1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ1
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetAZ2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ2
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicSubnetAZ3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnetAZ3
+      RouteTableId: !Ref PublicRouteTable
+
+  # Private Route Table
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MedVaultVPC
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-private-rt-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATGateway
+
+  PrivateSubnetAZ1RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ1
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetAZ2RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ2
+      RouteTableId: !Ref PrivateRouteTable
+
+  PrivateSubnetAZ3RouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnetAZ3
+      RouteTableId: !Ref PrivateRouteTable
+
+  # VIOLATION: Bastion SG allows SSH from 0.0.0.0/0 (pattern 5)
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for bastion host - allows SSH from anywhere'
+      GroupName: !Sub 'medvault-bastion-sg-${Environment}'
+      VpcId: !Ref MedVaultVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+          Description: 'SSH access from anywhere - VIOLATION: Should restrict CIDR'
+        - IpProtocol: icmp
+          FromPort: -1
+          ToPort: -1
+          CidrIp: 10.0.0.0/16
+          Description: ICMP from VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-bastion-sg-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VIOLATION: Legacy RDP SG allows RDP from 0.0.0.0/0 (pattern 6)
+  LegacyWindowsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for legacy Windows servers - allows RDP from anywhere'
+      GroupName: !Sub 'medvault-windows-sg-${Environment}'
+      VpcId: !Ref MedVaultVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: 0.0.0.0/0
+          Description: 'RDP access from anywhere - VIOLATION: Should restrict CIDR'
+        - IpProtocol: tcp
+          FromPort: 5985
+          ToPort: 5985
+          CidrIp: 10.0.0.0/16
+          Description: WinRM from VPC
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-windows-sg-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # ALB Security Group (compliant)
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for Application Load Balancer'
+      GroupName: !Sub 'medvault-alb-sg-${Environment}'
+      VpcId: !Ref MedVaultVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+          Description: HTTP from internet
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+          Description: HTTPS from internet
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-alb-sg-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Application Security Group (compliant)
+  AppSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for application servers - allows traffic from ALB only'
+      GroupName: !Sub 'medvault-app-sg-${Environment}'
+      VpcId: !Ref MedVaultVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 8080
+          ToPort: 8080
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Application traffic from ALB only
+        - IpProtocol: tcp
+          FromPort: 8443
+          ToPort: 8443
+          SourceSecurityGroupId: !Ref ALBSecurityGroup
+          Description: Secure application traffic from ALB only
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-app-sg-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Database Security Group (compliant)
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: 'Security group for RDS database - allows traffic from application only'
+      GroupName: !Sub 'medvault-db-sg-${Environment}'
+      VpcId: !Ref MedVaultVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref AppSecurityGroup
+          Description: PostgreSQL from application servers only
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+          Description: All outbound traffic
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-db-sg-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VIOLATION: No VPC Flow Logs (pattern 21)
+  # CloudWatch Log Group for Flow Logs (created but not used)
+  FlowLogsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/vpc/flowlogs/medvault-${Environment}'
+      RetentionInDays: 30
+
+  # Flow Logs IAM Role
+  FlowLogsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: vpc-flow-logs.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CloudWatchLogPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogGroup'
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                  - 'logs:DescribeLogGroups'
+                  - 'logs:DescribeLogStreams'
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-flowlogs-role-${Environment}'
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VPC Flow Logs - VIOLATION: Only created if EnableFlowLogs is true (default false)
+  VPCFlowLogs:
+    Type: AWS::EC2::FlowLog
+    Condition: CreateFlowLogs
+    Properties:
+      ResourceType: VPC
+      ResourceId: !Ref MedVaultVPC
+      TrafficType: ALL
+      LogDestinationType: cloud-watch-logs
+      LogGroupName: !Ref FlowLogsLogGroup
+      DeliverLogsPermissionIAM: !GetAtt FlowLogsRole.Arn
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-flowlogs-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+Outputs:
+  VpcId:
+    Description: VPC ID
+    Value: !Ref MedVaultVPC
+    Export:
+      Name: !Sub 'MedVault-VPC-ID-${Environment}'
+
+  VpcCidr:
+    Description: VPC CIDR block
+    Value: !GetAtt MedVaultVPC.CidrBlock
+
+  PublicSubnets:
+    Description: Comma-delimited list of public subnet IDs
+    Value: !Join
+      - ','
+      - - !Ref PublicSubnetAZ1
+        - !Ref PublicSubnetAZ2
+        - !Ref PublicSubnetAZ3
+    Export:
+      Name: !Sub 'MedVault-PublicSubnets-${Environment}'
+
+  PrivateSubnets:
+    Description: Comma-delimited list of private subnet IDs
+    Value: !Join
+      - ','
+      - - !Ref PrivateSubnetAZ1
+        - !Ref PrivateSubnetAZ2
+        - !Ref PrivateSubnetAZ3
+    Export:
+      Name: !Sub 'MedVault-PrivateSubnets-${Environment}'
+
+  BastionSecurityGroupId:
+    Description: Bastion security group ID
+    Value: !Ref BastionSecurityGroup
+    Export:
+      Name: !Sub 'MedVault-BastionSG-${Environment}'
+
+  LegacyWindowsSecurityGroupId:
+    Description: Legacy Windows security group ID
+    Value: !Ref LegacyWindowsSecurityGroup
+    Export:
+      Name: !Sub 'MedVault-WindowsSG-${Environment}'
+
+  ALBSecurityGroupId:
+    Description: ALB security group ID
+    Value: !Ref ALBSecurityGroup
+    Export:
+      Name: !Sub 'MedVault-ALBSG-${Environment}'
+
+  AppSecurityGroupId:
+    Description: Application security group ID
+    Value: !Ref AppSecurityGroup
+    Export:
+      Name: !Sub 'MedVault-AppSG-${Environment}'
+
+  DBSecurityGroupId:
+    Description: Database security group ID
+    Value: !Ref DBSecurityGroup
+    Export:
+      Name: !Sub 'MedVault-DbSG-${Environment}'
+
+  InternetGatewayId:
+    Description: Internet Gateway ID
+    Value: !Ref InternetGateway
+
+  NATGatewayId:
+    Description: NAT Gateway ID
+    Value: !Ref NATGateway
+
+  NATGatewayPublicIP:
+    Description: NAT Gateway public IP address
+    Value: !Ref NATGatewayEIP

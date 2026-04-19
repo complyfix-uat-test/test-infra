@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "internal-tools.fullname" . }}
+  labels:
+    {{- include "internal-tools.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "internal-tools.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "internal-tools.selectorLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: {{ include "internal-tools.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # VIOLATION: No pod security context
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+      - name: internal-tools
+        # VIOLATION: Container explicitly running as root
+        # VIOLATION: Privileged container
+        securityContext:
+          {{- toYaml .Values.securityContext | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 3000
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          value: {{ .Values.config.logLevel | quote }}
+        - name: ENVIRONMENT
+          value: {{ .Values.config.environment | quote }}
+        - name: PORT
+          value: {{ .Values.config.port | quote }}
+        - name: DEBUG_MODE
+          value: {{ .Values.config.debugMode | quote }}
+        # VIOLATION: No liveness or readiness probes defined
+        # ComplyFix should add these for better reliability
+        # VIOLATION: No resource limits
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

@@ -1,0 +1,44 @@
+{{- if .Values.rbac.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "internal-tools.serviceAccountName" . }}
+  labels:
+    {{- include "internal-tools.labels" . | nindent 4 }}
+---
+# VIOLATION: ClusterRole with wildcard permissions (pattern 27 - RBAC too broad)
+# ComplyFix should detect this and suggest scoping to specific resources
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ if .Values.rbac.clusterWide }}ClusterRole{{ else }}Role{{ end }}
+metadata:
+  name: {{ include "internal-tools.fullname" . }}
+  labels:
+    {{- include "internal-tools.labels" . | nindent 4 }}
+rules:
+{{- with .Values.rbac.rules }}
+  {{- toYaml . | nindent 2 }}
+{{- else }}
+  # Default: read-only access to cluster info
+  - apiGroups: [""]
+    resources: ["pods", "services", "nodes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "daemonsets"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: {{ if .Values.rbac.clusterWide }}ClusterRoleBinding{{ else }}RoleBinding{{ end }}
+metadata:
+  name: {{ include "internal-tools.fullname" . }}
+  labels:
+    {{- include "internal-tools.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: {{ if .Values.rbac.clusterWide }}ClusterRole{{ else }}Role{{ end }}
+  name: {{ include "internal-tools.fullname" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "internal-tools.serviceAccountName" . }}
+    namespace: {{ .Release.Namespace }}
+{{- end }}

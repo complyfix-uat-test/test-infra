@@ -1,0 +1,52 @@
+# Production environment overrides for internal-tools
+# Slightly tighter but still has violations for testing ComplyFix
+
+replicaCount: 1
+
+image:
+  tag: "1.1.0"
+  pullPolicy: IfNotPresent
+
+# VIOLATION: Still running as root in prod
+securityContext:
+  runAsUser: 0
+  privileged: false
+  # allowPrivilegeEscalation still allows it
+
+# VIOLATION: No pod security context in prod
+podSecurityContext: {}
+
+# VIOLATION: No resource limits in prod
+resources: {}
+
+service:
+  type: ClusterIP
+  port: 3000
+  targetPort: 3000
+
+ingress:
+  enabled: false
+
+# VIOLATION: RBAC still too broad - wildcard permissions
+rbac:
+  create: true
+  clusterWide: true
+  rules:
+    - apiGroups: ["*"]
+      resources: ["*"]
+      verbs: ["*"]
+
+# VIOLATION: Network policy still disabled
+networkPolicy:
+  enabled: false
+
+config:
+  logLevel: warn
+  port: 3000
+  environment: production
+  debugMode: "false"
+
+# TODO: Scope RBAC to only required resources (pods, deployments, events, logs)
+# TODO: Add pod security context
+# TODO: Add resource limits for prod workload
+# TODO: Enable network policy restricted to admin namespace

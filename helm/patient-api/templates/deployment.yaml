@@ -1,0 +1,152 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "patient-api.fullname" . }}
+  labels:
+    {{- include "patient-api.labels" . | nindent 4 }}
+    app.kubernetes.io/component: api
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "patient-api.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/metrics"
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "patient-api.selectorLabels" . | nindent 8 }}
+        version: {{ .Chart.AppVersion | quote }}
+    spec:
+      serviceAccountName: {{ include "patient-api.serviceAccountName" . }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # VIOLATION: podSecurityContext is templated with 'default dict'
+      # If .Values.podSecurityContext is empty, this will render empty
+      # ComplyFix should detect that no pod security context is set
+      securityContext:
+        {{- toYaml (.Values.podSecurityContext | default dict) | nindent 8 }}
+      containers:
+      - name: patient-api
+        # VIOLATION: Container security context also templated with default
+        # If .Values.securityContext is empty, no restrictions are applied
+        securityContext:
+          {{- toYaml (.Values.securityContext | default dict) | nindent 12 }}
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        ports:
+        - name: http
+          containerPort: 8080
+          protocol: TCP
+        env:
+        - name: LOG_LEVEL
+          value: {{ .Values.config.logLevel | quote }}
+        - name: ENVIRONMENT
+          value: {{ .Values.config.environment | quote }}
+        - name: PORT
+          value: {{ .Values.config.port | quote }}
+        - name: POSTGRES_HOST
+          value: "{{ .Release.Name }}-postgresql"
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: patient-api-config
+              key: database.name
+              optional: true
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: patient-api-secrets
+              key: database.username
+              optional: true
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: patient-api-secrets
+              key: database.password
+              optional: true
+        - name: REDIS_HOST
+          value: "{{ .Release.Name }}-redis-master"
+        - name: REDIS_PORT
+          value: "6379"
+        - name: REDIS_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: patient-api-secrets
+              key: redis.password
+              optional: true
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: patient-api-secrets
+              key: jwt.secret
+              optional: true
+        - name: API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: patient-api-secrets
+              key: api.key
+              optional: true
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: http
+          initialDelaySeconds: {{ .Values.livenessProbe.initialDelaySeconds | default 30 }}
+          periodSeconds: {{ .Values.livenessProbe.periodSeconds | default 10 }}
+          timeoutSeconds: {{ .Values.livenessProbe.timeoutSeconds | default 5 }}
+          failureThreshold: {{ .Values.livenessProbe.failureThreshold | default 3 }}
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: http
+          initialDelaySeconds: {{ .Values.readinessProbe.initialDelaySeconds | default 10 }}
+          periodSeconds: {{ .Values.readinessProbe.periodSeconds | default 5 }}
+          timeoutSeconds: {{ .Values.readinessProbe.timeoutSeconds | default 3 }}
+          failureThreshold: {{ .Values.readinessProbe.failureThreshold | default 2 }}
+        # VIOLATION: Resource limits not applied if .Values.resources is empty
+        # ComplyFix should detect and add appropriate limits and requests
+        resources:
+          {{- toYaml .Values.resources | nindent 12 }}
+        volumeMounts:
+        {{- if .Values.volumeMounts }}
+        {{- toYaml .Values.volumeMounts | nindent 12 }}
+        {{- else }}
+        - name: phi-data
+          mountPath: /data/phi
+        - name: config
+          mountPath: /etc/patient-api
+        {{- end }}
+      {{- with .Values.volumes }}
+      volumes:
+        {{- toYaml . | nindent 8 }}
+      {{- else }}
+      volumes:
+      - name: phi-data
+        emptyDir: {}
+      - name: config
+        configMap:
+          name: {{ include "patient-api.fullname" . }}-config
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

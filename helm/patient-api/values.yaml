@@ -1,0 +1,237 @@
+# Default values for patient-api chart
+# MedVault Patient Data API - Production baseline with compliance gaps for testing
+
+replicaCount: 3
+
+image:
+  repository: 123456789.dkr.ecr.us-east-1.amazonaws.com/medvault/patient-api
+  tag: "2.3.1"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# VIOLATION: No podSecurityContext defined - pods can run as root
+# ComplyFix should detect this and fix by setting runAsNonRoot: true and runAsUser: 1000
+podSecurityContext: {}
+  # fsGroup: 1000
+  # runAsNonRoot: true
+  # runAsUser: 1000
+
+# VIOLATION: No container securityContext - no privilege restrictions
+# ComplyFix should add readOnlyRootFilesystem, allowPrivilegeEscalation: false, etc.
+securityContext: {}
+  # allowPrivilegeEscalation: false
+  # readOnlyRootFilesystem: true
+  # runAsNonRoot: true
+  # runAsUser: 1000
+  # capabilities:
+  #   drop:
+  #     - ALL
+
+serviceAccount:
+  create: true
+  annotations:
+    # AWS IAM Role for Service Account (IRSA) - allows pod to assume IAM role
+    eks.amazonaws.com/role-arn: "arn:aws:iam::123456789:role/patient-api-role"
+  name: "patient-api"
+
+podAnnotations:
+  prometheus.io/scrape: "true"
+  prometheus.io/port: "8080"
+  prometheus.io/path: "/metrics"
+
+# VIOLATION: No resource limits defined (pattern 13)
+# ComplyFix should detect this and add resource requests and limits
+resources: {}
+  # limits:
+  #   cpu: 500m
+  #   memory: 512Mi
+  # requests:
+  #   cpu: 250m
+  #   memory: 256Mi
+
+# Autoscaling configuration
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+
+nodeSelector: {}
+
+tolerations: []
+
+affinity: {}
+
+# Service configuration
+service:
+  type: ClusterIP
+  port: 8080
+  targetPort: 8080
+  annotations: {}
+
+# Ingress configuration
+# VIOLATION: No TLS configuration (pattern 17 - ALB no HTTPS)
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/tags: "Environment=prod,Team=platform"
+  hosts:
+    - host: api.medvault.io
+      paths:
+        - path: /
+          pathType: Prefix
+  # VIOLATION: Missing TLS configuration - should have tls block with certificate
+  tls: []
+    # - secretName: patient-api-tls
+    #   hosts:
+    #     - api.medvault.io
+
+# Probes configuration
+livenessProbe:
+  httpGet:
+    path: /health
+    port: 8080
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+readinessProbe:
+  httpGet:
+    path: /ready
+    port: 8080
+  initialDelaySeconds: 10
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 2
+
+# Pod Disruption Budget configuration
+# VIOLATION: Pod disruption budget not enabled (pattern - no PDB)
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 2
+
+# Network Policy configuration
+# VIOLATION: Network policy disabled (pattern 14)
+networkPolicy:
+  enabled: false
+  ingress:
+    - from:
+      - namespaceSelector:
+          matchLabels:
+            name: ingress-nginx
+  egress:
+    - to:
+      - namespaceSelector: {}
+
+# Monitoring and metrics
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    path: /metrics
+
+# Application configuration passed to container
+config:
+  logLevel: info
+  port: 8080
+  environment: production
+
+# Secrets management
+# VIOLATION: Secrets not encrypted at rest (pattern 16)
+secrets:
+  enabled: true
+  # In production, these should come from AWS Secrets Manager or similar
+  databasePassword: "medvault-db-prod-2024"
+  redisPassword: "medvault-redis-prod-2024"
+  jwtSecret: "jwt-secret-key-medvault-2024-long-string"
+  apiKey: "api-key-medvault-prod-2024"
+
+# Volume configuration
+volumes:
+  - name: phi-data
+    emptyDir: {}
+  - name: config
+    configMap:
+      name: patient-api-config
+
+volumeMounts:
+  - name: phi-data
+    mountPath: /data/phi
+  - name: config
+    mountPath: /etc/patient-api
+
+# Redis subchart configuration
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "medvault-redis-2024"
+  master:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClassName: gp3
+    # VIOLATION: No resource limits on redis master (pattern 13)
+    resources: {}
+      # limits:
+      #   cpu: 200m
+      #   memory: 256Mi
+      # requests:
+      #   cpu: 100m
+      #   memory: 128Mi
+
+    # VIOLATION: No pod security context on redis (pattern 12)
+    podSecurityContext: {}
+      # runAsNonRoot: true
+      # runAsUser: 999
+      # fsGroup: 999
+
+    # VIOLATION: No container security context
+    containerSecurityContext: {}
+      # allowPrivilegeEscalation: false
+      # readOnlyRootFilesystem: true
+
+# PostgreSQL subchart configuration
+postgresql:
+  enabled: true
+  auth:
+    username: medvault
+    password: "pg-medvault-2024"
+    database: medvault_prod
+  primary:
+    persistence:
+      enabled: true
+      size: 50Gi
+      storageClassName: gp3
+
+    # VIOLATION: No resource limits on postgresql (pattern 13)
+    resources: {}
+      # limits:
+      #   cpu: 500m
+      #   memory: 1Gi
+      # requests:
+      #   cpu: 250m
+      #   memory: 512Mi
+
+    # VIOLATION: No pod security context
+    podSecurityContext: {}
+      # runAsNonRoot: true
+      # runAsUser: 999
+      # fsGroup: 999
+
+    # VIOLATION: No container security context
+    containerSecurityContext: {}
+      # allowPrivilegeEscalation: false
+
+# TODO: Add encryption at rest for PostgreSQL before HIPAA audit
+# TODO: Add network policy for pod-to-pod communication before SOC 2 audit
+# TODO: Enable pod disruption budget before production rollout

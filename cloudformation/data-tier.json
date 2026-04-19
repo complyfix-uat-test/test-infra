@@ -1,0 +1,639 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Description": "MedVault Data Tier - S3, RDS, DynamoDB, ElastiCache - CloudFormation Template",
+  "Parameters": {
+    "Environment": {
+      "Type": "String",
+      "Default": "staging",
+      "AllowedValues": ["dev", "staging", "prod"],
+      "Description": "Environment name",
+      "ConstraintDescription": "Must be dev, staging, or prod"
+    },
+    "DBInstanceClass": {
+      "Type": "String",
+      "Default": "db.t3.medium",
+      "Description": "RDS instance class",
+      "AllowedValues": [
+        "db.t3.micro",
+        "db.t3.small",
+        "db.t3.medium",
+        "db.t3.large",
+        "db.r5.large",
+        "db.r5.xlarge"
+      ]
+    },
+    "DBUsername": {
+      "Type": "String",
+      "Default": "medvault_admin",
+      "MinLength": 8,
+      "MaxLength": 16,
+      "Description": "RDS master username"
+    },
+    "DBPassword": {
+      "Type": "String",
+      "NoEcho": true,
+      "MinLength": 12,
+      "MaxLength": 41,
+      "Description": "RDS master password"
+    }
+  },
+  "Resources": {
+    "PHIStorageBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": {
+          "Fn::Sub": "medvault-phi-${Environment}-${AWS::AccountId}"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-phi-storage-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "DataClassification",
+            "Value": "PHI"
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "Compliance",
+            "Value": "HIPAA"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "AuditLogsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": {
+          "Fn::Sub": "medvault-audit-logs-${Environment}-${AWS::AccountId}"
+        },
+        "VersioningConfiguration": {
+          "Status": "Enabled"
+        },
+        "ServerSideEncryptionConfiguration": [
+          {
+            "ServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ],
+        "PublicAccessBlockConfiguration": {
+          "BlockPublicAcls": true,
+          "BlockPublicPolicy": true,
+          "IgnorePublicAcls": true,
+          "RestrictPublicBuckets": true
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-audit-logs-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "DataClassification",
+            "Value": "AuditLogs"
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "Compliance",
+            "Value": "HIPAA"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "StaticAssetsBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {
+        "BucketName": {
+          "Fn::Sub": "medvault-static-assets-${Environment}-${AWS::AccountId}"
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-static-assets-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "StaticAssetsBucketPolicy": {
+      "Type": "AWS::S3::BucketPolicy",
+      "Properties": {
+        "Bucket": {
+          "Ref": "StaticAssetsBucket"
+        },
+        "PolicyText": {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Sid": "PublicReadGetObject",
+              "Effect": "Allow",
+              "Principal": "*",
+              "Action": "s3:GetObject",
+              "Resource": {
+                "Fn::Sub": "${StaticAssetsBucket.Arn}/*"
+              },
+              "Condition": {
+                "IpAddress": {
+                  "aws:SourceIp": "0.0.0.0/0"
+                }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "RDSSubnetGroup": {
+      "Type": "AWS::RDS::DBSubnetGroup",
+      "Properties": {
+        "DBSubnetGroupDescription": "Subnet group for RDS database",
+        "SubnetIds": {
+          "Fn::Split": [
+            ",",
+            {
+              "Fn::ImportValue": {
+                "Fn::Sub": "MedVault-PrivateSubnets-${Environment}"
+              }
+            }
+          ]
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-rds-subnet-group-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "RDSPostgresInstance": {
+      "Type": "AWS::RDS::DBInstance",
+      "DeletionPolicy": "Snapshot",
+      "Properties": {
+        "DBInstanceIdentifier": {
+          "Fn::Sub": "medvault-postgres-${Environment}"
+        },
+        "DBInstanceClass": {
+          "Ref": "DBInstanceClass"
+        },
+        "Engine": "postgres",
+        "EngineVersion": "15.3",
+        "MasterUsername": {
+          "Ref": "DBUsername"
+        },
+        "MasterUserPassword": {
+          "Ref": "DBPassword"
+        },
+        "AllocatedStorage": "100",
+        "StorageType": "gp3",
+        "StorageEncrypted": false,
+        "PubliclyAccessible": true,
+        "DBSubnetGroupName": {
+          "Ref": "RDSSubnetGroup"
+        },
+        "VPCSecurityGroups": [
+          {
+            "Fn::ImportValue": {
+              "Fn::Sub": "MedVault-DbSG-${Environment}"
+            }
+          }
+        ],
+        "EnableCloudwatchLogsExports": ["postgresql"],
+        "EnableIAMDatabaseAuthentication": false,
+        "DeletionProtection": false,
+        "MultiAZ": false,
+        "BackupRetentionPeriod": 0,
+        "PreferredBackupWindow": "03:00-04:00",
+        "PreferredMaintenanceWindow": "sun:04:00-sun:05:00",
+        "CopyTagsToSnapshot": true,
+        "EnableEnhancedMonitoring": false,
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-postgres-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "DataClassification",
+            "Value": "PHI"
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "Compliance",
+            "Value": "HIPAA"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "DynamoDBSessionsTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": {
+          "Fn::Sub": "medvault-sessions-${Environment}"
+        },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "SessionId",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "CreatedAt",
+            "AttributeType": "N"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "SessionId",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "CreatedAt",
+            "KeyType": "RANGE"
+          }
+        ],
+        "TimeToLiveSpecification": {
+          "AttributeName": "ExpiresAt",
+          "Enabled": true
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-sessions-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "DataClassification",
+            "Value": "SessionData"
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "Compliance",
+            "Value": "HIPAA"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "DynamoDBAllAuditTrailTable": {
+      "Type": "AWS::DynamoDB::Table",
+      "Properties": {
+        "TableName": {
+          "Fn::Sub": "medvault-audit-trail-${Environment}"
+        },
+        "BillingMode": "PAY_PER_REQUEST",
+        "AttributeDefinitions": [
+          {
+            "AttributeName": "AuditId",
+            "AttributeType": "S"
+          },
+          {
+            "AttributeName": "Timestamp",
+            "AttributeType": "N"
+          }
+        ],
+        "KeySchema": [
+          {
+            "AttributeName": "AuditId",
+            "KeyType": "HASH"
+          },
+          {
+            "AttributeName": "Timestamp",
+            "KeyType": "RANGE"
+          }
+        ],
+        "SSESpecification": {
+          "SSEEnabled": true,
+          "SSEType": "KMS",
+          "KMSMasterKeyId": "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+        },
+        "PointInTimeRecoverySpecification": {
+          "PointInTimeRecoveryEnabled": true
+        },
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-audit-trail-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "DataClassification",
+            "Value": "AuditLogs"
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "Compliance",
+            "Value": "HIPAA"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "ElastiCacheSubnetGroup": {
+      "Type": "AWS::ElastiCache::SubnetGroup",
+      "Properties": {
+        "Description": "Subnet group for ElastiCache",
+        "SubnetIds": {
+          "Fn::Split": [
+            ",",
+            {
+              "Fn::ImportValue": {
+                "Fn::Sub": "MedVault-PrivateSubnets-${Environment}"
+              }
+            }
+          ]
+        }
+      }
+    },
+    "ElastiCacheSecurityGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "Security group for ElastiCache Redis cluster",
+        "VpcId": {
+          "Fn::ImportValue": {
+            "Fn::Sub": "MedVault-VPC-ID-${Environment}"
+          }
+        },
+        "SecurityGroupIngress": [
+          {
+            "IpProtocol": "tcp",
+            "FromPort": 6379,
+            "ToPort": 6379,
+            "SourceSecurityGroupId": {
+              "Fn::ImportValue": {
+                "Fn::Sub": "MedVault-AppSG-${Environment}"
+              }
+            },
+            "Description": "Redis from application servers"
+          }
+        ],
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-elasticache-sg-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    },
+    "RedisCluster": {
+      "Type": "AWS::ElastiCache::CacheCluster",
+      "Properties": {
+        "CacheClusterId": {
+          "Fn::Sub": "medvault-redis-${Environment}"
+        },
+        "CacheNodeType": "cache.t3.medium",
+        "Engine": "redis",
+        "EngineVersion": "7.0",
+        "NumCacheNodes": 1,
+        "VpcSecurityGroupIds": [
+          {
+            "Ref": "ElastiCacheSecurityGroup"
+          }
+        ],
+        "CacheSubnetGroupName": {
+          "Ref": "ElastiCacheSubnetGroup"
+        },
+        "AutomaticFailoverEnabled": false,
+        "MultiAZEnabled": false,
+        "TransitEncryptionEnabled": false,
+        "AtRestEncryptionEnabled": false,
+        "AuthToken": "",
+        "Tags": [
+          {
+            "Key": "Name",
+            "Value": {
+              "Fn::Sub": "medvault-redis-${Environment}"
+            }
+          },
+          {
+            "Key": "Environment",
+            "Value": {
+              "Ref": "Environment"
+            }
+          },
+          {
+            "Key": "DataClassification",
+            "Value": "Cache"
+          },
+          {
+            "Key": "Project",
+            "Value": "MedVault"
+          },
+          {
+            "Key": "Compliance",
+            "Value": "HIPAA"
+          },
+          {
+            "Key": "ManagedBy",
+            "Value": "CloudFormation"
+          }
+        ]
+      }
+    }
+  },
+  "Outputs": {
+    "PHIBucketArn": {
+      "Description": "ARN of PHI storage bucket",
+      "Value": {
+        "Fn::GetAtt": ["PHIStorageBucket", "Arn"]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "MedVault-PHIBucket-${Environment}"
+        }
+      }
+    },
+    "PHIBucketName": {
+      "Description": "Name of PHI storage bucket",
+      "Value": {
+        "Ref": "PHIStorageBucket"
+      }
+    },
+    "AuditLogsBucketArn": {
+      "Description": "ARN of audit logs bucket",
+      "Value": {
+        "Fn::GetAtt": ["AuditLogsBucket", "Arn"]
+      }
+    },
+    "AuditLogsBucketName": {
+      "Description": "Name of audit logs bucket",
+      "Value": {
+        "Ref": "AuditLogsBucket"
+      }
+    },
+    "StaticAssetsBucketName": {
+      "Description": "Name of static assets bucket",
+      "Value": {
+        "Ref": "StaticAssetsBucket"
+      }
+    },
+    "RDSEndpoint": {
+      "Description": "RDS PostgreSQL database endpoint",
+      "Value": {
+        "Fn::GetAtt": ["RDSPostgresInstance", "Endpoint.Address"]
+      },
+      "Export": {
+        "Name": {
+          "Fn::Sub": "MedVault-RDSEndpoint-${Environment}"
+        }
+      }
+    },
+    "RDSPort": {
+      "Description": "RDS PostgreSQL database port",
+      "Value": {
+        "Fn::GetAtt": ["RDSPostgresInstance", "Endpoint.Port"]
+      }
+    },
+    "DynamoDBSessionsTableName": {
+      "Description": "DynamoDB Sessions table name",
+      "Value": {
+        "Ref": "DynamoDBSessionsTable"
+      }
+    },
+    "DynamoDBSessionsTableArn": {
+      "Description": "DynamoDB Sessions table ARN",
+      "Value": {
+        "Fn::GetAtt": ["DynamoDBSessionsTable", "Arn"]
+      }
+    },
+    "DynamoDBAllAuditTrailTableName": {
+      "Description": "DynamoDB Audit Trail table name",
+      "Value": {
+        "Ref": "DynamoDBAllAuditTrailTable"
+      }
+    },
+    "DynamoDBAllAuditTrailTableArn": {
+      "Description": "DynamoDB Audit Trail table ARN",
+      "Value": {
+        "Fn::GetAtt": ["DynamoDBAllAuditTrailTable", "Arn"]
+      }
+    },
+    "RedisClusterAddress": {
+      "Description": "Redis cluster address",
+      "Value": {
+        "Fn::GetAtt": ["RedisCluster", "RedisEndpoint.Address"]
+      }
+    },
+    "RedisClusterPort": {
+      "Description": "Redis cluster port",
+      "Value": {
+        "Fn::GetAtt": ["RedisCluster", "RedisEndpoint.Port"]
+      }
+    }
+  }
+}

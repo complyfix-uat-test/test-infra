@@ -1,0 +1,121 @@
+# Staging environment overrides for patient-api
+# Partially hardened - some security controls enabled but not complete
+
+replicaCount: 2
+
+image:
+  tag: "2.3.1"
+  pullPolicy: IfNotPresent
+
+# VIOLATION: Partial pod security context - fsGroup set but runAsNonRoot missing
+podSecurityContext:
+  fsGroup: 1000
+  # runAsNonRoot is NOT set - this is the violation
+  # ComplyFix should detect and fix this
+
+# VIOLATION: Partial container security context
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  # runAsNonRoot and runAsUser still missing
+
+# VIOLATION: Partial resource limits - defined for main container but NOT for subcharts
+resources:
+  limits:
+    cpu: 400m
+    memory: 400Mi
+  requests:
+    cpu: 200m
+    memory: 200Mi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 75
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# VIOLATION: Ingress TLS partially configured but incomplete
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/certificate-arn: "arn:aws:acm:us-east-1:123456789:certificate/staging"
+  hosts:
+    - host: api-staging.medvault.io
+      paths:
+        - path: /
+          pathType: Prefix
+  # VIOLATION: TLS block defined but missing secretName and hosts configuration
+  tls:
+    - hosts:
+        - api-staging.medvault.io
+
+config:
+  logLevel: info
+  port: 8080
+  environment: staging
+
+secrets:
+  enabled: true
+  databasePassword: "medvault-db-staging-2024"
+  redisPassword: "medvault-redis-staging-2024"
+  jwtSecret: "jwt-secret-key-staging-2024"
+  apiKey: "api-key-staging-2024"
+
+# VIOLATION: Redis resource limits not set (pattern 13)
+redis:
+  enabled: true
+  auth:
+    enabled: true
+    password: "medvault-redis-staging-2024"
+  master:
+    persistence:
+      enabled: true
+      size: 5Gi
+    resources: {}
+      # ComplyFix should add limits for redis
+    podSecurityContext: {}
+      # ComplyFix should add security context
+    containerSecurityContext: {}
+
+# VIOLATION: PostgreSQL partial hardening but resources still missing
+postgresql:
+  enabled: true
+  auth:
+    username: medvault
+    password: "pg-medvault-staging-2024"
+    database: medvault_staging
+  primary:
+    persistence:
+      enabled: true
+      size: 30Gi
+    resources: {}
+      # ComplyFix should add limits
+    podSecurityContext: {}
+      # ComplyFix should add security context
+    containerSecurityContext: {}
+
+# VIOLATION: Network policy disabled even in staging (pattern 14)
+networkPolicy:
+  enabled: false
+
+# VIOLATION: PDB not enabled in staging
+podDisruptionBudget:
+  enabled: false
+
+# Staging-specific monitoring
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: 60s
+
+# TODO: Enable network policy for staging before promoting to prod
+# TODO: Add PDB with minAvailable: 1

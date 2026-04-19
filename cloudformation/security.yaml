@@ -1,0 +1,532 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'MedVault Security and Compliance - IAM, CloudTrail, KMS, CloudWatch, SNS - CloudFormation Template'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: staging
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name
+
+  AdminEmail:
+    Type: String
+    Description: Email address for security notifications
+
+  EnableCloudTrail:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+    Description: Enable CloudTrail logging for audit trail
+
+Conditions:
+  CreateCloudTrail: !Equals [!Ref EnableCloudTrail, 'true']
+
+Resources:
+  # KMS Master Key for encryption
+  MedVaultMasterKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: Master encryption key for MedVault
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow CloudTrail to encrypt logs
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action:
+              - 'kms:GenerateDataKey'
+              - 'kms:DecryptDataKey'
+            Resource: '*'
+          - Sid: Allow CloudWatch Logs
+            Effect: Allow
+            Principal:
+              Service: logs.amazonaws.com
+            Action:
+              - 'kms:Encrypt'
+              - 'kms:Decrypt'
+              - 'kms:ReEncrypt*'
+              - 'kms:GenerateDataKey*'
+              - 'kms:CreateGrant'
+              - 'kms:DescribeKey'
+            Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-master-key-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  MedVaultMasterKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/medvault-master-${Environment}'
+      TargetKeyId: !GetAtt MedVaultMasterKey.Arn
+
+  # S3 bucket for CloudTrail logs
+  CloudTrailBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'medvault-cloudtrail-logs-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      ServerSideEncryptionConfiguration:
+        - ServerSideEncryptionByDefault:
+            SSEAlgorithm: aws:kms
+            KMSMasterKeyID: !GetAtt MedVaultMasterKey.Arn
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-cloudtrail-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  CloudTrailBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref CloudTrailBucket
+      PolicyText:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AWSCloudTrailAclCheck
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: 's3:GetBucketAcl'
+            Resource: !GetAtt CloudTrailBucket.Arn
+          - Sid: AWSCloudTrailWrite
+            Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: 's3:PutObject'
+            Resource: !Sub '${CloudTrailBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                's3:x-amz-acl': bucket-owner-full-control
+
+  # VIOLATION: CloudTrail disabled by default (pattern 10)
+  MedVaultCloudTrail:
+    Type: AWS::CloudTrail::Trail
+    Condition: CreateCloudTrail
+    DependsOn: CloudTrailBucketPolicy
+    Properties:
+      TrailName: !Sub 'medvault-trail-${Environment}'
+      S3BucketName: !Ref CloudTrailBucket
+      IncludeGlobalServiceEvents: true
+      IsLogging: true
+      IsMultiRegionTrail: true
+      EnableLogFileValidation: true
+      KMSKeyId: !GetAtt MedVaultMasterKey.Arn
+      EventSelectors:
+        - IncludeManagementEvents: true
+          ReadWriteType: All
+          DataResources:
+            - Type: 'AWS::S3::Object'
+              Values:
+                - 'arn:aws:s3:::medvault-phi-*/*'
+            - Type: 'AWS::Lambda::Function'
+              Values:
+                - 'arn:aws:lambda:*:*:function/*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-cloudtrail-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VIOLATION: CloudWatch Log Groups without retention (pattern 20)
+  ApplicationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/medvault/application'
+      RetentionInDays: null
+
+  AuditLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/medvault/audit'
+      RetentionInDays: null
+
+  # Compliant CloudWatch Log Group (shows mixed compliance)
+  AccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/medvault/access'
+      RetentionInDays: 365
+
+  # VIOLATION: SNS topics without KMS encryption (pattern 30)
+  MedVaultAlertsTopicRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: sns.amazonaws.com
+            Action: 'sts:AssumeRole'
+
+  MedVaultAlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'medvault-alerts-${Environment}'
+      DisplayName: MedVault Security Alerts
+      Subscription:
+        - Endpoint: !Ref AdminEmail
+          Protocol: email
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-alerts-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  MedVaultAuditNotificationsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub 'medvault-audit-notifications-${Environment}'
+      DisplayName: MedVault Audit Notifications
+      Subscription:
+        - Endpoint: !Ref AdminEmail
+          Protocol: email
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-audit-notifications-${Environment}'
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: Project
+          Value: MedVault
+        - Key: Compliance
+          Value: HIPAA
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VIOLATION: IAM policy too permissive - Admin role (pattern 11)
+  AdminRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'medvault-admin-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: AdministratorAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: '*'
+                Resource: '*'
+                Sid: 'VIOLATION: Overly permissive admin policy'
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-admin-${Environment}'
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VIOLATION: CI/CD role allows AssumeRole with no conditions (pattern 11)
+  CICDRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'medvault-cicd-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: codepipeline.amazonaws.com
+            Action: 'sts:AssumeRole'
+          - Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'sts:AssumeRole'
+            Sid: 'VIOLATION: No conditions on AssumeRole'
+      Policies:
+        - PolicyName: CICDPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'ecs:*'
+                  - 'ecr:*'
+                  - 's3:*'
+                  - 'cloudformation:*'
+                  - 'iam:PassRole'
+                Resource: '*'
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-cicd-${Environment}'
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # Application Role (compliant - specific permissions)
+  ApplicationRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'medvault-app-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 's3:GetObject'
+                  - 's3:PutObject'
+                Resource:
+                  - !Sub 'arn:aws:s3:::medvault-phi-${Environment}/*'
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:GetItem'
+                  - 'dynamodb:Query'
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:*:*:table/medvault-*'
+        - PolicyName: SNSPublish
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sns:Publish'
+                Resource:
+                  - !Ref MedVaultAlertsTopic
+                  - !Ref MedVaultAuditNotificationsTopic
+      Tags:
+        - Key: Name
+          Value: !Sub 'medvault-app-role-${Environment}'
+        - Key: Project
+          Value: MedVault
+        - Key: ManagedBy
+          Value: CloudFormation
+
+  # VIOLATION: MFA not enforced for user access (pattern 22)
+  MFAEnforcement:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: MFAEnforcementPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: 'VIOLATION: MFA not required'
+            Effect: Deny
+            Action:
+              - 'iam:DeleteAccessKey'
+              - 'iam:DeleteLoginProfile'
+              - 'iam:DeleteVirtualMFADevice'
+              - 'iam:ListAccessKeys'
+              - 'iam:ListLoginProfiles'
+            Resource: '*'
+      Roles:
+        - !Ref ApplicationRole
+
+  # Audit Trail Policy
+  AuditTrailPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: AuditTrailPolicy
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - 'cloudtrail:DescribeTrails'
+              - 'cloudtrail:GetTrailStatus'
+            Resource: '*'
+          - Effect: Allow
+            Action:
+              - 's3:GetObject'
+              - 's3:GetBucketVersioning'
+            Resource:
+              - !GetAtt CloudTrailBucket.Arn
+              - !Sub '${CloudTrailBucket.Arn}/*'
+      Roles:
+        - !Ref ApplicationRole
+
+  # CloudWatch Log Group for CloudTrail (compliant with encryption)
+  CloudTrailLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/cloudtrail/medvault-${Environment}'
+      RetentionInDays: 90
+
+  CloudTrailLogGroupRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudtrail.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: CloudTrailCloudWatchLogsPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'logs:CreateLogStream'
+                  - 'logs:PutLogEvents'
+                Resource: !GetAtt CloudTrailLogGroup.Arn
+
+  # Secrets Manager for database credentials (compliant best practice)
+  DBSecretRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: secretsmanager.amazonaws.com
+            Action: 'sts:AssumeRole'
+      Policies:
+        - PolicyName: SecretsManagerPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'kms:Decrypt'
+                  - 'kms:DescribeKey'
+                Resource: !GetAtt MedVaultMasterKey.Arn
+
+  # Account Password Policy
+  AccountPasswordPolicy:
+    Type: AWS::IAM::AccountPasswordPolicy
+    Properties:
+      MinimumPasswordLength: 14
+      RequireSymbols: true
+      RequireNumbers: true
+      RequireUppercaseCharacters: true
+      RequireLowercaseCharacters: true
+      AllowUsersToChangePassword: true
+      ExpirePasswords: true
+      MaxPasswordAge: 90
+      PasswordReusePrevention: 24
+      HardExpiry: false
+
+Outputs:
+  MasterKeyId:
+    Description: KMS Master Key ID
+    Value: !Ref MedVaultMasterKey
+    Export:
+      Name: !Sub 'MedVault-MasterKey-${Environment}'
+
+  MasterKeyArn:
+    Description: KMS Master Key ARN
+    Value: !GetAtt MedVaultMasterKey.Arn
+    Export:
+      Name: !Sub 'MedVault-MasterKeyArn-${Environment}'
+
+  CloudTrailBucketName:
+    Description: S3 bucket for CloudTrail logs
+    Value: !Ref CloudTrailBucket
+
+  CloudTrailArn:
+    Description: CloudTrail ARN
+    Condition: CreateCloudTrail
+    Value: !GetAtt MedVaultCloudTrail.Arn
+    Export:
+      Name: !Sub 'MedVault-CloudTrail-${Environment}'
+
+  ApplicationLogGroupName:
+    Description: CloudWatch log group for application
+    Value: !Ref ApplicationLogGroup
+
+  AuditLogGroupName:
+    Description: CloudWatch log group for audit
+    Value: !Ref AuditLogGroup
+
+  AccessLogGroupName:
+    Description: CloudWatch log group for access
+    Value: !Ref AccessLogGroup
+
+  MedVaultAlertsTopicArn:
+    Description: SNS topic for security alerts
+    Value: !Ref MedVaultAlertsTopic
+    Export:
+      Name: !Sub 'MedVault-AlertsTopic-${Environment}'
+
+  MedVaultAuditNotificationsTopicArn:
+    Description: SNS topic for audit notifications
+    Value: !Ref MedVaultAuditNotificationsTopic
+    Export:
+      Name: !Sub 'MedVault-AuditTopic-${Environment}'
+
+  AdminRoleArn:
+    Description: Admin IAM role ARN
+    Value: !GetAtt AdminRole.Arn
+
+  CICDRoleArn:
+    Description: CI/CD IAM role ARN
+    Value: !GetAtt CICDRole.Arn
+
+  ApplicationRoleArn:
+    Description: Application IAM role ARN
+    Value: !GetAtt ApplicationRole.Arn
+    Export:
+      Name: !Sub 'MedVault-AppRole-${Environment}'
+
+  CloudTrailLogGroupName:
+    Description: CloudWatch log group for CloudTrail
+    Value: !Ref CloudTrailLogGroup
